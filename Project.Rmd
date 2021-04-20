@@ -1,0 +1,221 @@
+---
+title: "Project"
+author: "Shannon Houser"
+date: "4/19/2021"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Load in packages
+
+```{r}
+require(tidyverse)
+require(rstanarm)
+library(tidyverse)
+require(loo)
+require(bayesplot)
+require(caret)
+library(rstan)
+require(HSAUR3)
+library(patchwork)
+
+ggplot2::theme_set(ggplot2::theme_bw())
+knitr::opts_chunk$set(fig.align = 'center')
+```
+
+# Load in data
+
+```{r}
+breast_cancer <- read.csv("breast_cancer.csv")
+breast_cancer <- breast_cancer %>% 
+  mutate(diagnosis = if_else(diagnosis == "M", 1, 0),
+         diagnosis = factor(diagnosis)) %>% 
+  select(-id)
+
+breast_cancer <- breast_cancer %>% 
+  mutate(across(.cols = where(is.double), ~ scale(., center = T, scale = F)))# ~ (. - mean(.))/sd(.)))
+```
+
+
+# Using rstan to find the posterior values
+
+## Normal priors
+```{r}
+set.seed(12345)
+post_norm <- stan_glm(diagnosis ~ ., data = breast_cancer,
+                 family = binomial(link = "logit"), 
+                 prior = normal(0,1), prior_intercept = normal(0,1),
+                 seed = seed,
+                 refresh = 0)
+summary(post_norm)
+```
+
+```{r fig.height= 10, fig.width=5}
+density_plot <- mcmc_areas(as.matrix(post_norm), prob = 0.90, prob_outer = 1)
+means <- round(coef(post_norm), 3)
+means <- as_tibble(means)
+intervals <- round(posterior_interval(post_norm, prob = 0.90), 3)
+intervals <- as_tibble(intervals)
+interval_plot <- mcmc_intervals(as.matrix(post_norm), prob = 0.90, prob_outer = 1)
+
+names <- breast_cancer %>% 
+  colnames() %>% 
+  as_tibble() %>% 
+  mutate(value = if_else(value == "diagnosis", "Intercept", value)) 
+
+coef <- 
+  tibble(
+    Coefficient = names$value,
+    `5%` = intervals$`5%`,
+    Mean = means$value,
+    `95%` = intervals$`95%`
+  )
+
+density_plot
+coef
+interval_plot + 
+  geom_vline(xintercept = 0, color = "red")
+
+
+```
+
+## Cauchy Prior
+
+```{r}
+set.seed(12345)
+post_cauchy <- stan_glm(diagnosis ~ ., data = breast_cancer,
+                 family = binomial(link = "logit"), 
+                 prior = cauchy(0, 2.5), prior_intercept = cauchy(0, 2.5),
+                 seed = seed,
+                 refresh = 0)
+summary(post_cauchy)
+```
+
+
+```{r fig.height= 10, fig.width=5}
+density_plot2 <- mcmc_areas(as.matrix(post_cauchy), prob = 0.90, prob_outer = 1)
+means2 <- round(coef(post_cauchy), 3)
+means2 <- as_tibble(means2)
+intervals2 <- round(posterior_interval(post_cauchy, prob = 0.90), 3)
+intervals2 <- as_tibble(intervals2)
+interval_plot2 <- mcmc_intervals(as.matrix(post_cauchy), prob = 0.90, prob_outer = 1)
+
+names2 <- breast_cancer %>% 
+  colnames() %>% 
+  as_tibble() %>% 
+  mutate(value = if_else(value == "diagnosis", "Intercept", value)) 
+
+coef2 <- 
+  tibble(
+    Coefficient = names2$value,
+    `5%` = intervals2$`5%`,
+    Mean = means2$value,
+    `95%` = intervals2$`95%`
+  )
+
+density_plot2 
+coef2
+interval_plot2 + 
+  geom_vline(xintercept = 0, color = "red") 
+
+
+```
+
+## Intercept only
+
+```{r}
+set.seed(12345)
+post_int <- stan_glm(diagnosis ~ 1, data = breast_cancer,
+                 family = binomial(link = "logit"), 
+                 prior = normal(0,1), prior_intercept = normal(0,1),
+                 seed = seed,
+                 refresh = 0)
+```
+
+
+# Compare Models
+
+```{r}
+loo_norm <- loo(post_norm, save_psis = TRUE)
+# k_norm <- kfold(post_norm, K = 10)
+loo_cauchy <- loo(post_cauchy, save_psis = TRUE)
+loo0 <- loo(post0, save_psis = T)
+rstanarm::loo_compare(loo0, loo_norm)
+loo_compare(loo_norm, loo_cauchy)
+```
+
+# Predictive Ability
+
+## Normal
+
+```{r}
+preds_norm <- posterior_linpred(post_norm, transform = T)
+pred_norm <- colMeans(preds_norm)
+ploo_norm = E_loo(preds_norm, loo_norm$psis_object, type="mean", log_ratios = -log_lik(post_norm))$value
+round(mean(xor(ploo_norm>0.5,as.integer(breast_cancer$diagnosis==0))),3)
+```
+
+## Cauchy
+
+```{r}
+preds_cauchy <- posterior_linpred(post_cauchy, transform = T)
+pred_cauchy <- colMeans(preds_cauchy)
+ploo_cauchy = E_loo(preds_cauchy, loo_cauchy$psis_object, type="mean", log_ratios = -log_lik(post_cauchy))$value
+round(mean(xor(ploo_cauchy>0.5,as.integer(breast_cancer$diagnosis==0))),3)
+```
+
+
+```{r}
+names %>% 
+  mutate(value = if_else(value == "Intercept", "(Intercept)", value))
+
+parsssss <- names$value
+
+stan_trace(post_cauchy)
+stan_hist(post_cauchy)
+stan_dens(post_cauchy)
+stan_ac(post_cauchy)
+stan_plot(post_cauchy)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
