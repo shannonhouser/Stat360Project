@@ -39,29 +39,39 @@ breast_cancer <- breast_cancer %>%
   select(-id)
 
 breast_cancer <- breast_cancer %>% 
-  mutate(across(.cols = where(is.double), ~ scale(., center = T, scale = F)))# ~ (. - mean(.))/sd(.)))
+  mutate(across(.cols = where(is.double), ~ scale(., center = T, scale = T)))# ~ (. - mean(.))/sd(.)))
 ```
 
 # EDA
 ```{r}
 breast_longer <- breast_cancer %>% 
   pivot_longer(cols = radius_mean:fractal_dimension_mean,
-               names_to = "type")
+               names_to = "type") %>% 
+  mutate(type = str_replace(type, "_", " "),
+         type = str_replace(type, "\\.", " "),
+         type = str_to_title(type))
 ```
 
 ## Distributions
 ```{r}
 breast_longer %>% 
-  ggplot(aes(x = value, color = type)) +
+  ggplot(aes(x = value, fill = type)) +
   geom_histogram() +
   facet_wrap(. ~ type, scales = "free") +
-  theme(legend.position = "none")
+  theme(legend.position = "none") +
+  labs(title = "Scaled Variable Distributions", 
+       x = "Value",
+       y = "Count")
 
 breast_longer %>% 
   ggplot(aes(x = value, y = diagnosis, color = type)) +
   geom_boxplot() +
   facet_wrap(. ~ type, scales = "free") +
-  theme(legend.position = "none")
+  theme(legend.position = "none") +
+  labs(title = "Scaled Variable Distributions by Diagnosis", 
+       x = "Value",
+       y = "Diagnosis")
+
 
 corr <- round(cor(breast_cancer[2:11]), 1)
 ggcorrplot(corr, outline.col = "white", type = "upper")
@@ -77,7 +87,6 @@ set.seed(12345)
 post_norm <- stan_glm(diagnosis ~ ., data = breast_cancer,
                  family = binomial(link = "logit"), 
                  prior = normal(0,1), prior_intercept = normal(0,1),
-                 seed = seed,
                  refresh = 0)
 summary(post_norm)
 ```
@@ -118,7 +127,6 @@ set.seed(12345)
 post_cauchy <- stan_glm(diagnosis ~ ., data = breast_cancer,
                  family = binomial(link = "logit"), 
                  prior = cauchy(0, 2.5), prior_intercept = cauchy(0, 2.5),
-                 seed = seed,
                  refresh = 0)
 summary(post_cauchy)
 ```
@@ -137,19 +145,39 @@ names2 <- breast_cancer %>%
   as_tibble() %>% 
   mutate(value = if_else(value == "diagnosis", "Intercept", value)) 
 
-coef2 <- 
+
   tibble(
     Coefficient = names2$value,
     `5%` = intervals2$`5%`,
     Mean = means2$value,
     `95%` = intervals2$`95%`
-  )
+  ) %>% 
+  knitr::kable()
 
 density_plot2 
 coef2
 interval_plot2 + 
   geom_vline(xintercept = 0, color = "red") 
 
+coef2 %>% 
+  filter(Coefficient != "(Intercept)",
+         `5%` > 0 & `95%` > 0 | `5%` < 0 & `95%` < 0) %>%  
+  mutate(Coefficient = fct_reorder(Coefficient, Mean)) %>%
+  ggplot(aes(Mean, Coefficient, color = Mean > 0)) +
+  geom_vline(xintercept = 0, color = "red", lty = 2) +
+  geom_point() +
+  geom_errorbarh(aes(xmin = `5%`, xmax = `95%`)) +
+  scale_color_manual(values = c("black", "#9f0e37"))+
+  labs(x = "Estimate",
+       y = NULL,
+       color = "Positive?",
+       title = "What Cell Nuclei Features are Correlated with Diagnosis?",
+       subtitle = "Bounds denote 95% Credible Interval") +
+  theme(axis.text = element_text(size = 10), plot.title = element_text(size = 17),
+    panel.background = element_blank(),
+    panel.grid = element_line(color = "grey"),
+    legend.position = "none") +
+  guides(color = guide_legend(reverse = TRUE))
 
 ```
 
@@ -198,10 +226,10 @@ round(mean(xor(ploo_cauchy>0.5,as.integer(breast_cancer$diagnosis==0))),3)
 
 
 ```{r}
-names %>% 
+names2 %>% 
   mutate(value = if_else(value == "Intercept", "(Intercept)", value))
 
-parsssss <- names$value
+parsssss <- names2$value
 
 stan_trace(post_cauchy)
 stan_hist(post_cauchy)
@@ -212,6 +240,10 @@ stan_plot(post_cauchy)
 
 ```{r}
 bf <- bayesfactor(post_cauchy)
+
+bf %>% 
+  knitr::kable()
+
 sig <- bf %>% 
   filter(BF > 1,
          Parameter != "(Intercept)") %>% 
@@ -239,20 +271,29 @@ coef2 %>%
 ```
 
 ```{r}
-breast_sig <- merge(breast_cancer[sig], breast_cancer$diagnosis) %>% 
-  rename(diagnosis = y)
+breast_sig <- bind_cols(breast_cancer[sig], diagnosis = breast_cancer$diagnosis)
   
 set.seed(12345)
 post_cauchy2 <- stan_glm(diagnosis ~ ., 
                          data = breast_sig,
                  family = binomial(link = "logit"), 
                  prior = cauchy(0, 2.5), prior_intercept = cauchy(0, 2.5),
-                 seed = seed,
                  refresh = 0)
 
 summary(post_cauchy2)
+```
 
+```{r}
+loo_cauchy2 <- loo(post_cauchy2, save_psis = TRUE)
+loo_compare(loo_cauchy2, loo_cauchy)
+```
 
+```{r}
+set.seed(12345)
+post_cauchy <- stan_glm(diagnosis ~ .*., data = breast_cancer,
+                 family = binomial(link = "logit"), 
+                 prior = cauchy(0, 2.5), prior_intercept = cauchy(0, 2.5),
+                 refresh = 0)
 ```
 
 
