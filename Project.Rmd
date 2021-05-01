@@ -21,6 +21,9 @@ require(caret)
 library(rstan)
 require(HSAUR3)
 library(patchwork)
+library(ggcorrplot)
+library(bayestestR)
+library(logspline)
 
 ggplot2::theme_set(ggplot2::theme_bw())
 knitr::opts_chunk$set(fig.align = 'center')
@@ -38,6 +41,32 @@ breast_cancer <- breast_cancer %>%
 breast_cancer <- breast_cancer %>% 
   mutate(across(.cols = where(is.double), ~ scale(., center = T, scale = F)))# ~ (. - mean(.))/sd(.)))
 ```
+
+# EDA
+```{r}
+breast_longer <- breast_cancer %>% 
+  pivot_longer(cols = radius_mean:fractal_dimension_mean,
+               names_to = "type")
+```
+
+## Distributions
+```{r}
+breast_longer %>% 
+  ggplot(aes(x = value, color = type)) +
+  geom_histogram() +
+  facet_wrap(. ~ type, scales = "free") +
+  theme(legend.position = "none")
+
+breast_longer %>% 
+  ggplot(aes(x = value, y = diagnosis, color = type)) +
+  geom_boxplot() +
+  facet_wrap(. ~ type, scales = "free") +
+  theme(legend.position = "none")
+
+corr <- round(cor(breast_cancer[2:11]), 1)
+ggcorrplot(corr, outline.col = "white", type = "upper")
+```
+
 
 
 # Using rstan to find the posterior values
@@ -181,7 +210,50 @@ stan_ac(post_cauchy)
 stan_plot(post_cauchy)
 ```
 
+```{r}
+bf <- bayesfactor(post_cauchy)
+sig <- bf %>% 
+  filter(BF > 1,
+         Parameter != "(Intercept)") %>% 
+  pull(Parameter)
 
+coef2 %>% 
+  filter(Coefficient != "(Intercept)",
+         `5%` > 0 & `95%` > 0 | `5%` < 0 & `95%` < 0) %>%  
+  mutate(Coefficient = fct_reorder(Coefficient, Mean)) %>%
+  ggplot(aes(Mean, Coefficient, color = Mean > 0)) +
+  geom_vline(xintercept = 0, color = "red", lty = 2) +
+  geom_point() +
+  geom_errorbarh(aes(xmin = `5%`, xmax = `95%`)) +
+  scale_color_manual(values = c("black", "#9f0e37"))+
+  labs(x = "Estimate",
+       y = NULL,
+       color = "Positive?",
+       title = "What determines higher numbers of AEDs?",
+       subtitle = "Bounds denote 95% Confidence Interval") +
+  theme(axis.text = element_text(size = 10), plot.title = element_text(size = 17),
+    panel.background = element_blank(),
+    panel.grid = element_line(color = "grey"),
+    legend.position = "none") +
+  guides(color = guide_legend(reverse = TRUE))
+```
+
+```{r}
+breast_sig <- merge(breast_cancer[sig], breast_cancer$diagnosis) %>% 
+  rename(diagnosis = y)
+  
+set.seed(12345)
+post_cauchy2 <- stan_glm(diagnosis ~ ., 
+                         data = breast_sig,
+                 family = binomial(link = "logit"), 
+                 prior = cauchy(0, 2.5), prior_intercept = cauchy(0, 2.5),
+                 seed = seed,
+                 refresh = 0)
+
+summary(post_cauchy2)
+
+
+```
 
 
 
